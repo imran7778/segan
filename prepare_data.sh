@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # DOWNLOAD THE DATASET
+import sox
+import sox
 mkdir -p data
 pushd data
 if [ ! -d clean_trainset_wav_16k ]; then
