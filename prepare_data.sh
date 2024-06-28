@@ -18,6 +18,7 @@ if [ ! -d clean_trainset_wav_16k ]; then
         mkdir -p clean_trainset_wav_16k
         pushd clean_trainset_wav
         ls *.wav | while read name; do
+            import sox
             sox $name -r 16k ../clean_trainset_wav_16k/$name
         done
         popd
@@ -38,6 +39,7 @@ if [ ! -d noisy_trainset_wav_16k ]; then
         mkdir -p noisy_trainset_wav_16k
         pushd noisy_trainset_wav
         ls *.wav | while read name; do
+            import sox
             sox $name -r 16k ../noisy_trainset_wav_16k/$name
         done
         popd
