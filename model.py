@@ -144,24 +144,44 @@ class SEGAN(Model):
         avg_g_grads = average_gradients(all_g_grads)
         self.d_opt = d_opt.apply_gradients(avg_d_grads)
         self.g_opt = g_opt.apply_gradients(avg_g_grads)
-
+    def parse_function(proto):
+        features = {
+            'wav': tf.io.FixedLenFeature([], tf.string),
+            'noisy': tf.io.FixedLenFeature([], tf.string)
+        }
+        parsed_features = tf.io.parse_single_example(proto, features)
+        wav = tf.io.decode_raw(parsed_features['wav'], tf.float32)
+        noisy = tf.io.decode_raw(parsed_features['noisy'], tf.float32)
+        wav = tf.reshape(wav, [self.canvas_size])
+        noisy = tf.reshape(noisy, [self.canvas_size])
+        return wav, noisy
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
             # create the nodes to load for input pipeline
-            filename_queue = tf.train.string_input_producer([self.e2e_dataset])
-            self.get_wav, self.get_noisy = read_and_decode(filename_queue,
-                                                           self.canvas_size,
-                                                           self.preemph)
+            # Create a dataset from the TFRecord file
+            dataset = tf.data.TFRecordDataset([self.e2e_dataset])
+            # Parse the TFRecord
+            dataset = dataset.map(self.parse_function, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+            # Shuffle, repeat, and batch the examples
+            dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size).repeat()
+            # Create an iterator
+            iterator = iter(dataset)
+            self.get_wav, self.get_noisy = iterator.get_next()
+            
+           # filename_queue = tf.train.string_input_producer([self.e2e_dataset])
+            #self.get_wav, self.get_noisy = read_and_decode(filename_queue,
+                                                          # self.canvas_size,
+                                                          # self.preemph)
         # load the data to input pipeline
         wavbatch, \
-        noisybatch = tf.train.shuffle_batch([self.get_wav,
-                                             self.get_noisy],
-                                             batch_size=self.batch_size,
-                                             num_threads=2,
-                                             capacity=1000 + 3 * self.batch_size,
-                                             min_after_dequeue=1000,
-                                             name='wav_and_noisy')
+        #noisybatch = tf.train.shuffle_batch([self.get_wav,
+                                             #self.get_noisy],
+                                             #batch_size=self.batch_size,
+                                             #num_threads=2,
+                                             #capacity=1000 + 3 * self.batch_size,
+                                            # min_after_dequeue=1000,
+                                             #name='wav_and_noisy')
         if gpu_idx == 0:
             self.Gs = []
             self.zs = []
