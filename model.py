@@ -144,6 +144,7 @@ class SEGAN(Model):
         avg_g_grads = average_gradients(all_g_grads)
         self.d_opt = d_opt.apply_gradients(avg_d_grads)
         self.g_opt = g_opt.apply_gradients(avg_g_grads)
+    
     def parse_function(proto):
         features = {
             'wav': tf.io.FixedLenFeature([], tf.string),
@@ -158,11 +159,10 @@ class SEGAN(Model):
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
-            # create the nodes to load for input pipeline
-            # Create a dataset from the TFRecord file
+             # Create a dataset from the TFRecord file
             dataset = tf.data.TFRecordDataset([self.e2e_dataset])
             # Parse the TFRecord
-            dataset = dataset.map(self.parse_function, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+            dataset = dataset.map(lambda x: self.parse_function(x), num_parallel_calls=tf.data.experimental.AUTOTUNE)
             # Shuffle, repeat, and batch the examples
             dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size).repeat()
             # Create an iterator
