@@ -11,7 +11,7 @@ from absl import flags, app
 
 devices = device_lib.list_local_devices()
 
-flags = tf.app.flags
+
 flags.DEFINE_integer("seed",111, "Random seed (Def: 111).")
 flags.DEFINE_integer("epoch", 150, "Epochs to train (Def: 150).")
 flags.DEFINE_integer("batch_size", 150, "Batch size (Def: 150).")
