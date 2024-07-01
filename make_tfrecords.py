@@ -87,7 +87,7 @@ def main(opts):
         # read the configuration description
         cfg_desc = toml.loads(cfh.read())
         beg_enc_t = timeit.default_timer()
-        out_file = tf.python_io.TFRecordWriter(out_filepath)
+        out_file = tf.io.TFRecordWriter(out_filepath)
         # process the acoustic and textual data now
         for dset_i, (dset, dset_desc) in enumerate(cfg_desc.iteritems()):
             print('-' * 50)
