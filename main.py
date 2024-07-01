@@ -73,7 +73,7 @@ def main(_):
     if not os.path.exists(FLAGS.synthesis_path):
         os.makedirs(FLAGS.synthesis_path)
     np.random.seed(FLAGS.seed)
-    config = tf.ConfigProto()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement=True
     udevices = []
@@ -84,7 +84,7 @@ def main(_):
         print('Using device: ', device.name)
         udevices.append(device.name)
     # execute the session
-    with tf.Session(config=config) as sess:
+    with tf.compat.v1.Session(config=config) as sess:
         if FLAGS.model == 'gan':
             print('Creating GAN model')
             se_model = SEGAN(sess, FLAGS, udevices)
