@@ -6,6 +6,7 @@ import os
 from tensorflow.python.client import device_lib
 from scipy.io import wavfile
 from data_loader import pre_emph
+from absl import flags, app
 
 
 devices = device_lib.list_local_devices()
@@ -119,4 +120,4 @@ def main(_):
 
 
 if __name__ == '__main__':
-    tf.app.run()
+    app.run()
