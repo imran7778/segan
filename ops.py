@@ -306,13 +306,13 @@ def conv2d(input_, output_dim, k_h, k_w, stddev=0.05, name="conv2d", with_w=Fals
 # https://github.com/openai/improved-gan/blob/master/imagenet/ops.py
 @contextmanager
 def variables_on_gpu0():
-    old_fn = tf.get_variable
+    old_fn = tf.compat.v1.get_variable
     def new_fn(*args, **kwargs):
         with tf.device("/gpu:0"):
             return old_fn(*args, **kwargs)
-    tf.get_variable = new_fn
+    tf.compat.v1.get_variable = new_fn
     yield
-    tf.get_variable = old_fn
+    tf.compat.v1.get_variable = old_fn
 
 def average_gradients(tower_grads):
     """ Calculate the average gradient for each shared variable across towers.
