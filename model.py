@@ -2,6 +2,7 @@ from __future__ import print_function
 import tensorflow as tf
 from tensorflow.keras.layers import BatchNormalization, Dense, Flatten  
 from tensorflow.keras.initializers import glorot_uniform as xavier_initializer
+from tensorflow.keras.optimizers import RMSprop
 from scipy.io import wavfile
 from generator import *
 from discriminator import *
@@ -120,8 +121,8 @@ class SEGAN(Model):
     def build_model(self, config):
         all_d_grads = []
         all_g_grads = []
-        d_opt = tf.train.RMSPropOptimizer(config.d_learning_rate)
-        g_opt = tf.train.RMSPropOptimizer(config.g_learning_rate)
+        d_opt = RMSprop(learning_rate=config.d_learning_rate)  # Updated to tf.keras.optimizers.RMSprop
+        g_opt = RMSprop(learning_rate=config.g_learning_rate) 
         #d_opt = tf.train.AdamOptimizer(config.d_learning_rate,
         #                               beta1=config.beta_1)
         #g_opt = tf.train.AdamOptimizer(config.g_learning_rate,
