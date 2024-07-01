@@ -13,6 +13,17 @@ from ops import *
 import timeit
 import os
 
+def parse_function(proto):
+        features = {
+            'wav': tf.io.FixedLenFeature([], tf.string),
+            'noisy': tf.io.FixedLenFeature([], tf.string)
+        }
+        parsed_features = tf.io.parse_single_example(proto, features)
+        wav = tf.io.decode_raw(parsed_features['wav'], tf.float32)
+        noisy = tf.io.decode_raw(parsed_features['noisy'], tf.float32)
+        wav = tf.reshape(wav, [self.canvas_size])
+        noisy = tf.reshape(noisy, [self.canvas_size])
+        return wav, noisy
 
 class Model(object):
 
@@ -145,17 +156,6 @@ class SEGAN(Model):
         self.d_opt = d_opt.apply_gradients(avg_d_grads)
         self.g_opt = g_opt.apply_gradients(avg_g_grads)
     
-    def parse_function(proto):
-        features = {
-            'wav': tf.io.FixedLenFeature([], tf.string),
-            'noisy': tf.io.FixedLenFeature([], tf.string)
-        }
-        parsed_features = tf.io.parse_single_example(proto, features)
-        wav = tf.io.decode_raw(parsed_features['wav'], tf.float32)
-        noisy = tf.io.decode_raw(parsed_features['noisy'], tf.float32)
-        wav = tf.reshape(wav, [self.canvas_size])
-        noisy = tf.reshape(noisy, [self.canvas_size])
-        return wav, noisy
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
