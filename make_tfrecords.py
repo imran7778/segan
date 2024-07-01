@@ -57,8 +57,8 @@ def encoder_proc(wav_filename, noisy_path, out_file, wav_canvas_size):
     assert wav_signals.shape == noisy_signals.shape, noisy_signals.shape
 
     for (wav, noisy) in zip(wav_signals, noisy_signals):
-        wav_raw = wav.tostring()
-        noisy_raw = noisy.tostring()
+        wav_raw = wav.tobytes()
+        noisy_raw = noisy.tobytes()
         example = tf.train.Example(features=tf.train.Features(feature={
             'wav_raw': _bytes_feature(wav_raw),
             'noisy_raw': _bytes_feature(noisy_raw)}))
