@@ -1,7 +1,7 @@
 from __future__ import print_function
 import tensorflow as tf
-from tensorflow.contrib.layers import batch_norm, fully_connected, flatten
-from tensorflow.contrib.layers import xavier_initializer
+from tensorflow.keras.layers import BatchNormalization, Dense, Flatten  
+from tensorflow.keras.initializers import glorot_uniform as xavier_initializer 
 from contextlib import contextmanager
 import numpy as np
 
