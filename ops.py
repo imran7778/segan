@@ -66,7 +66,7 @@ def downconv(x, output_dim, kwidth=5, pool=2, init=None, uniform=False,
     w_init = init
     if w_init is None:
         w_init = xavier_initializer(uniform=uniform)
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
         W = tf.get_variable('W', [kwidth, 1, x.get_shape()[-1], output_dim],
                             initializer=w_init)
         conv = tf.nn.conv2d(x2d, W, strides=[1, pool, 1, 1], padding='SAME')
