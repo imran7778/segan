@@ -144,7 +144,7 @@ class AEGenerator(object):
         if is_ref and do_prelu:
             #keep track of prelu activations
             alphas = []
-        with tf.variable_scope('g_ae'):
+        with tf.compat.v1.variable_scope('g_ae'):
             #AE to be built is shaped:
             # enc ~ [16384x1, 8192x16, 4096x32, 2048x32, 1024x64, 512x64, 256x128, 128x128, 64x256, 32x256, 16x512, 8x1024]
             # dec ~ [8x2048, 16x1024, 32x512, 64x512, 8x256, 256x256, 512x128, 1024x128, 2048x64, 4096x64, 8192x32, 16384x1]
