@@ -4,8 +4,8 @@ from tensorflow.keras.layers import BatchNormalization, Dense, Flatten
 from tensorflow.keras.initializers import glorot_uniform as xavier_initializer
 from tensorflow.keras.optimizers import RMSprop
 from scipy.io import wavfile
-from generator import *
-from discriminator import *
+from generator import AEGenerator, Generator
+from discriminator import discriminator
 import numpy as np
 from data_loader import read_and_decode, de_emph
 from bnorm import VBN
@@ -13,22 +13,9 @@ from ops import *
 import timeit
 import os
 
-# Disable eager execution
-tf.compat.v1.disable_eager_execution()
-
-def parse_function(proto, canvas_size):
-    features = {
-        'wav': tf.io.FixedLenFeature([], tf.string),
-        'noisy': tf.io.FixedLenFeature([], tf.string)
-    }
-    parsed_features = tf.io.parse_single_example(proto, features)
-    wav = tf.io.decode_raw(parsed_features['wav'], tf.float32)
-    noisy = tf.io.decode_raw(parsed_features['noisy'], tf.float32)
-    wav = tf.reshape(wav, [canvas_size])
-    noisy = tf.reshape(noisy, [canvas_size])
-    return wav, noisy
 
 class Model(object):
+
     def __init__(self, name='BaseModel'):
         self.name = name
 
@@ -61,6 +48,7 @@ class Model(object):
         print('[*] Read {}'.format(ckpt_name))
         return True
 
+
 class SEGAN(Model):
     """ Speech Enhancement Generative Adversarial Network """
     def __init__(self, sess, args, devices, infer=False, name='SEGAN'):
@@ -79,47 +67,33 @@ class SEGAN(Model):
         self.devices = devices
         self.z_dim = args.z_dim
         self.z_depth = args.z_depth
-        # type of deconv
         self.deconv_type = args.deconv_type
-        # specify if use biases or not
         self.bias_downconv = args.bias_downconv
         self.bias_deconv = args.bias_deconv
         self.bias_D_conv = args.bias_D_conv
-        # clip D values
         self.d_clip_weights = False
-        # apply VBN or regular BN?
         self.disable_vbn = False
         self.save_path = args.save_path
-        # num of updates to be applied to D before G
-        # this is k in original GAN paper (https://arxiv.org/abs/1406.2661)
         self.disc_updates = 1
-        # set preemph factor
         self.preemph = args.preemph
         if self.preemph > 0:
             print('*** Applying pre-emphasis of {} ***'.format(self.preemph))
         else:
             print('--- No pre-emphasis applied ---')
-        # canvas size
         self.canvas_size = args.canvas_size
         self.deactivated_noise = False
-        # dilation factors per layer (only in atrous conv G config)
         self.g_dilated_blocks = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-        # num fmaps for AutoEncoder SEGAN (v1)
         self.g_enc_depths = [16, 32, 32, 64, 64, 128, 128, 256, 256, 512, 1024]
-        # Define D fmaps
         self.d_num_fmaps = [16, 32, 32, 64, 64, 128, 128, 256, 256, 512, 1024]
         self.init_noise_std = args.init_noise_std
         self.disc_noise_std = tf.Variable(self.init_noise_std, trainable=False)
         self.disc_noise_std_summ = scalar_summary('disc_noise_std',
                                                   self.disc_noise_std)
         self.e2e_dataset = args.e2e_dataset
-        # G's supervised loss weight
         self.l1_weight = args.init_l1_weight
         self.l1_lambda = tf.Variable(self.l1_weight, trainable=False)
         self.deactivated_l1 = False
-        # define the functions
         self.discriminator = discriminator
-        # register G non linearity
         self.g_nl = args.g_nl
         if args.g_type == 'ae':
             self.generator = AEGenerator(self)
@@ -132,33 +106,32 @@ class SEGAN(Model):
     def build_model(self, config):
         all_d_grads = []
         all_g_grads = []
-        d_opt = RMSprop(learning_rate=config.d_learning_rate)
-        g_opt = RMSprop(learning_rate=config.g_learning_rate)
+        d_opt = tf.compat.v1.train.RMSPropOptimizer(config.d_learning_rate)
+        g_opt = tf.compat.v1.train.RMSPropOptimizer(config.g_learning_rate)
 
         for idx, device in enumerate(self.devices):
             with tf.device("/%s" % device):
                 with tf.name_scope("device_%s" % idx):
                     with variables_on_gpu0():
                         self.build_model_single_gpu(idx)
-                        d_grads = d_opt.get_gradients(self.d_losses[-1], self.d_vars)
-                        g_grads = g_opt.get_gradients(self.g_losses[-1], self.g_vars)
+                        d_grads = d_opt.compute_gradients(self.d_losses[-1],
+                                                          var_list=self.d_vars)
+                        g_grads = g_opt.compute_gradients(self.g_losses[-1],
+                                                          var_list=self.g_vars)
                         all_d_grads.append(d_grads)
                         all_g_grads.append(g_grads)
                         tf.compat.v1.get_variable_scope().reuse_variables()
         avg_d_grads = average_gradients(all_d_grads)
         avg_g_grads = average_gradients(all_g_grads)
-        self.d_opt = d_opt.apply_gradients(zip(avg_d_grads, self.d_vars))
-        self.g_opt = g_opt.apply_gradients(zip(avg_g_grads, self.g_vars))
+        self.d_opt = d_opt.apply_gradients(avg_d_grads)
+        self.g_opt = g_opt.apply_gradients(avg_g_grads)
+
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
-            # Create a dataset from the TFRecord file
             dataset = tf.data.TFRecordDataset([self.e2e_dataset])
-            # Parse the TFRecord
             dataset = dataset.map(lambda x: parse_function(x, self.canvas_size), num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            # Shuffle, repeat, and batch the examples
             dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size).repeat()
-            # Create an iterator
             iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
             self.get_wav, self.get_noisy = iterator.get_next()
 
@@ -171,10 +144,8 @@ class SEGAN(Model):
         self.gtruth_wavs.append(self.get_wav)
         self.gtruth_noisy.append(self.get_noisy)
 
-        # add channels dimension to manipulate in D and G
         wavbatch = tf.expand_dims(self.get_wav, -1)
         noisybatch = tf.expand_dims(self.get_noisy, -1)
-        # by default leaky relu is used
         do_prelu = False
         if self.g_nl == 'prelu':
             do_prelu = True
@@ -189,11 +160,13 @@ class SEGAN(Model):
                 self.ref_alpha = ref_Gs[2:]
                 self.alpha_summ = []
                 for m, ref_alpha in enumerate(self.ref_alpha):
-                    self.alpha_summ.append(histogram_summary('alpha_{}'.format(m), ref_alpha))
+                    self.alpha_summ.append(histogram_summary('alpha_{}'.format(m),
+                                                             ref_alpha))
             dummy_joint = tf.concat([wavbatch, noisybatch], axis=2)
             dummy = self.discriminator(self, dummy_joint, reuse=False)
 
-        G, z = self.generator(noisybatch, is_ref=False, spk=None, do_prelu=do_prelu)
+        G, z  = self.generator(noisybatch, is_ref=False, spk=None,
+                               do_prelu=do_prelu)
         self.Gs.append(G)
         self.zs.append(z)
 
@@ -225,6 +198,7 @@ class SEGAN(Model):
 
         d_loss = d_rl_loss + d_fk_loss
         g_l1_loss = self.l1_lambda * tf.reduce_mean(tf.abs(G - wavbatch))
+
         g_loss = g_adv_loss + g_l1_loss
 
         self.g_l1_losses.append(g_l1_loss)
@@ -243,6 +217,7 @@ class SEGAN(Model):
 
         if gpu_idx == 0:
             self.get_vars()
+
 
     def get_vars(self):
         t_vars = tf.compat.v1.trainable_variables()
@@ -271,7 +246,6 @@ class SEGAN(Model):
     def vbn(self, tensor, name):
         if self.disable_vbn:
             class Dummy(object):
-                # Do nothing here, no bnorm
                 def __init__(self, tensor, ignored):
                     self.reference_output = tensor
                 def __call__(self, x):
@@ -287,9 +261,7 @@ class SEGAN(Model):
         return vbn(tensor)
 
     def train(self, config, devices):
-        """ Train the SEGAN """
         print('Initializing optimizers...')
-        # init optimizers
         d_opt = self.d_opt
         g_opt = self.g_opt
         num_devices = len(devices)
@@ -297,7 +269,6 @@ class SEGAN(Model):
         try:
             init = tf.compat.v1.global_variables_initializer()
         except AttributeError:
-            # fall back to old implementation
             init = tf.compat.v1.initialize_all_variables()
 
         print('Initializing variables...')
@@ -330,10 +301,9 @@ class SEGAN(Model):
         threads = tf.compat.v1.train.start_queue_runners(coord=coord)
 
         print('Sampling some wavs to store sample references...')
-        sample_noisy, sample_wav, \
-        sample_z = self.sess.run([self.gtruth_noisy[0],
-                                  self.gtruth_wavs[0],
-                                  self.zs[0]])
+        sample_noisy, sample_wav, sample_z = self.sess.run([self.gtruth_noisy[0],
+                                                            self.gtruth_wavs[0],
+                                                            self.zs[0]])
         print('sample noisy shape: ', sample_noisy.shape)
         print('sample wav shape: ', sample_wav.shape)
         print('sample z shape: ', sample_z.shape)
@@ -345,7 +315,7 @@ class SEGAN(Model):
             num_examples += 1
         print('total examples in TFRecords {}: {}'.format(self.e2e_dataset,
                                                           num_examples))
-        num_batches = num_examples / self.batch_size
+        num_batches = num_examples // self.batch_size
 
         print('Batches per epoch: ', num_batches)
 
@@ -365,33 +335,25 @@ class SEGAN(Model):
                 start = timeit.default_timer()
                 if counter % config.save_freq == 0:
                     for d_iter in range(self.disc_updates):
-                        _d_opt, _d_sum, \
-                        d_fk_loss, \
-                        d_rl_loss = self.sess.run([d_opt, self.d_sum,
-                                                   self.d_fk_losses[0],
-                                                   self.d_rl_losses[0]])
+                        _d_opt, _d_sum, d_fk_loss, d_rl_loss = self.sess.run([d_opt, self.d_sum,
+                                                                              self.d_fk_losses[0],
+                                                                              self.d_rl_losses[0]])
                         if self.d_clip_weights:
                             self.sess.run(self.d_clip)
 
-                    _g_opt, _g_sum, \
-                    g_adv_loss, \
-                    g_l1_loss = self.sess.run([g_opt, self.g_sum,
-                                               self.g_adv_losses[0],
-                                               self.g_l1_losses[0]])
+                    _g_opt, _g_sum, g_adv_loss, g_l1_loss = self.sess.run([g_opt, self.g_sum,
+                                                                           self.g_adv_losses[0],
+                                                                           self.g_l1_losses[0]])
                 else:
                     for d_iter in range(self.disc_updates):
-                        _d_opt, \
-                        d_fk_loss, \
-                        d_rl_loss = self.sess.run([d_opt,
-                                                   self.d_fk_losses[0],
-                                                   self.d_rl_losses[0]])
+                        _d_opt, d_fk_loss, d_rl_loss = self.sess.run([d_opt,
+                                                                      self.d_fk_losses[0],
+                                                                      self.d_rl_losses[0]])
                         if self.d_clip_weights:
                             self.sess.run(self.d_clip)
 
-                    _g_opt, \
-                    g_adv_loss, \
-                    g_l1_loss = self.sess.run([g_opt, self.g_adv_losses[0],
-                                               self.g_l1_losses[0]])
+                    _g_opt, g_adv_loss, g_l1_loss = self.sess.run([g_opt, self.g_adv_losses[0],
+                                                                   self.g_l1_losses[0]])
                 end = timeit.default_timer()
                 batch_timings.append(end - start)
                 d_fk_losses.append(d_fk_loss)
@@ -413,12 +375,12 @@ class SEGAN(Model):
                                                     np.mean(batch_timings)))
                 batch_idx += num_devices
                 counter += num_devices
-                if (counter / num_devices) % config.save_freq == 0:
+                if (counter // num_devices) % config.save_freq == 0:
                     self.save(config.save_path, counter)
                     self.writer.add_summary(_g_sum, counter)
                     self.writer.add_summary(_d_sum, counter)
-                    fdict = {self.gtruth_noisy[0]: sample_noisy,
-                             self.zs[0]: sample_z}
+                    fdict = {self.gtruth_noisy[0]:sample_noisy,
+                             self.zs[0]:sample_z}
                     canvas_w = self.sess.run(self.Gs[0],
                                              feed_dict=fdict)
                     swaves = sample_wav
@@ -492,20 +454,17 @@ class SEGAN(Model):
                     self.writer.add_summary(_d_sum, counter)
                     break
         except tf.errors.OutOfRangeError:
-            print('Done training; epoch limit {} reached.'.format(self.epoch))
+            print('[!] Reached queues limits in training loop')
         finally:
             coord.request_stop()
         coord.join(threads)
 
     def clean(self, x):
-        """ clean a utterance x
-            x: numpy array containing the normalized noisy waveform
-        """
         c_res = None
         for beg_i in range(0, x.shape[0], self.canvas_size):
-            if x.shape[0] - beg_i < self.canvas_size:
+            if x.shape[0] - beg_i  < self.canvas_size:
                 length = x.shape[0] - beg_i
-                pad = (self.canvas_size) - length
+                pad = self.canvas_size - length
             else:
                 length = self.canvas_size
                 pad = 0
@@ -515,7 +474,7 @@ class SEGAN(Model):
             else:
                 x_[0] = x[beg_i:beg_i + length]
             print('Cleaning chunk {} -> {}'.format(beg_i, beg_i + length))
-            fdict = {self.gtruth_noisy[0]: x_}
+            fdict = {self.gtruth_noisy[0]:x_}
             canvas_w = self.sess.run(self.Gs[0],
                                      feed_dict=fdict)[0]
             canvas_w = canvas_w.reshape((self.canvas_size))
@@ -529,6 +488,7 @@ class SEGAN(Model):
                 c_res = np.concatenate((c_res, canvas_w))
         c_res = de_emph(c_res, self.preemph)
         return c_res
+
 
 class SEAE(Model):
     """ Speech Enhancement Auto Encoder """
@@ -566,6 +526,7 @@ class SEAE(Model):
                         tf.compat.v1.get_variable_scope().reuse_variables()
         avg_g_grads = average_gradients(all_g_grads)
         self.g_opt = g_opt.apply_gradients(avg_g_grads)
+
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
@@ -650,9 +611,8 @@ class SEAE(Model):
         threads = tf.compat.v1.train.start_queue_runners(coord=coord)
 
         print('Sampling some wavs to store sample references...')
-        sample_noisy, \
-        sample_wav = self.sess.run([self.gtruth_noisy[0],
-                                    self.gtruth_wavs[0]])
+        sample_noisy, sample_wav = self.sess.run([self.gtruth_noisy[0],
+                                                  self.gtruth_wavs[0]])
         print('sample noisy shape: ', sample_noisy.shape)
         print('sample wav shape: ', sample_wav.shape)
         save_path = config.save_path
@@ -662,7 +622,7 @@ class SEAE(Model):
             num_examples += 1
         print('total examples in TFRecords {}: {}'.format(self.e2e_dataset,
                                                           num_examples))
-        num_batches = num_examples / self.batch_size
+        num_batches = num_examples // self.batch_size
 
         print('Batches per epoch: ', num_batches)
 
@@ -678,12 +638,10 @@ class SEAE(Model):
             while not coord.should_stop():
                 start = timeit.default_timer()
                 if counter % config.save_freq == 0:
-                    _g_opt, _g_sum, \
-                    g_loss = self.sess.run([g_opt, self.g_sum,
-                                            self.g_losses[0]])
+                    _g_opt, _g_sum, g_loss = self.sess.run([g_opt, self.g_sum,
+                                                            self.g_losses[0]])
                 else:
-                    _g_opt, \
-                    g_loss = self.sess.run([g_opt, self.g_losses[0]])
+                    _g_opt, g_loss = self.sess.run([g_opt, self.g_losses[0]])
 
                 end = timeit.default_timer()
                 batch_timings.append(end - start)
@@ -698,10 +656,10 @@ class SEAE(Model):
                                                     np.mean(batch_timings)))
                 batch_idx += num_devices
                 counter += num_devices
-                if (counter / num_devices) % config.save_freq == 0:
+                if (counter // num_devices) % config.save_freq == 0:
                     self.save(config.save_path, counter)
                     self.writer.add_summary(_g_sum, counter)
-                    fdict = {self.gtruth_noisy[0]: sample_noisy}
+                    fdict = {self.gtruth_noisy[0]:sample_noisy}
                     canvas_w = self.sess.run(self.Gs[0],
                                              feed_dict=fdict)
                     swaves = sample_wav
