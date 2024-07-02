@@ -156,7 +156,7 @@ class AEGenerator(object):
                         print('Biasing downconv in G')
                     bias_init = tf.constant_initializer(0.)
                 h_i_dwn = downconv(h_i, layer_depth, kwidth=kwidth,
-                                   init=tf.truncated_normal_initializer(stddev=0.02),
+                                   init=tf.compat.v1.truncated_normal_initializer(stddev=0.02),
                                    bias_init=bias_init,
                                    name='enc_{}'.format(layer_idx))
                 if is_ref:
