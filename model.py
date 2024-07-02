@@ -159,7 +159,7 @@ class SEGAN(Model):
             # Shuffle, repeat, and batch the examples
             dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size).repeat()
             # Create an iterator
-            iterator = iter(dataset)
+            iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
             self.get_wav, self.get_noisy = iterator.get_next()
 
         if gpu_idx == 0:
@@ -303,15 +303,12 @@ class SEGAN(Model):
         print('Initializing variables...')
         self.sess.run(init)
         g_summs = [self.d_fk_sum,
-                   #self.d_nfk_sum,
                    self.d_fk_loss_sum,
-                   #self.d_nfk_loss_sum,
                    self.g_loss_sum,
                    self.g_loss_l1_sum,
                    self.g_loss_adv_sum,
                    self.gen_summ,
                    self.gen_audio_summ]
-        # if we have prelus, add them to summary
         if hasattr(self, 'alpha_summ'):
             g_summs += self.alpha_summ
         self.g_sum = tf.compat.v1.summary.merge(g_summs)
@@ -333,9 +330,6 @@ class SEGAN(Model):
         threads = tf.compat.v1.train.start_queue_runners(coord=coord)
 
         print('Sampling some wavs to store sample references...')
-        # Hang onto a copy of wavs so we can feed the same one every time
-        # we store samples to disk for hearing
-        # pick a single batch
         sample_noisy, sample_wav, \
         sample_z = self.sess.run([self.gtruth_noisy[0],
                                   self.gtruth_wavs[0],
@@ -346,13 +340,11 @@ class SEGAN(Model):
 
         save_path = config.save_path
         counter = 0
-        # count number of samples
         num_examples = 0
         for record in tf.compat.v1.python_io.tf_record_iterator(self.e2e_dataset):
             num_examples += 1
         print('total examples in TFRecords {}: {}'.format(self.e2e_dataset,
                                                           num_examples))
-        # last samples (those not filling a complete batch) are discarded
         num_batches = num_examples / self.batch_size
 
         print('Batches per epoch: ', num_batches)
@@ -381,7 +373,6 @@ class SEGAN(Model):
                         if self.d_clip_weights:
                             self.sess.run(self.d_clip)
 
-                    # now G iterations
                     _g_opt, _g_sum, \
                     g_adv_loss, \
                     g_l1_loss = self.sess.run([g_opt, self.g_sum,
@@ -473,16 +464,12 @@ class SEGAN(Model):
 
                 if batch_idx >= num_batches:
                     curr_epoch += 1
-                    # re-set batch idx
                     batch_idx = 0
-                    # check if we have to deactivate L1
                     if curr_epoch >= config.l1_remove_epoch and not self.deactivated_l1:
                         print('** Deactivating L1 factor! **')
                         self.sess.run(tf.compat.v1.assign(self.l1_lambda, 0.))
                         self.deactivated_l1 = True
-                    # check if we have to start decaying noise (if any)
                     if curr_epoch >= config.denoise_epoch and not self.deactivated_noise:
-                        # apply noise std decay rate
                         decay = config.noise_decay
                         if not hasattr(self, 'curr_noise_std'):
                             self.curr_noise_std = self.init_noise_std
@@ -558,11 +545,9 @@ class SEAE(Model):
         self.epoch = args.epoch
         self.devices = devices
         self.save_path = args.save_path
-        # canvas size
         self.canvas_size = args.canvas_size
         self.g_enc_depths = [16, 32, 32, 64, 64, 128, 128, 256, 256, 512, 1024]
         self.e2e_dataset = args.e2e_dataset
-        # define the Generator
         self.generator = AEGenerator(self)
         self.build_model(args)
 
@@ -584,14 +569,10 @@ class SEAE(Model):
 
     def build_model_single_gpu(self, gpu_idx):
         if gpu_idx == 0:
-            # Create a dataset from the TFRecord file
             dataset = tf.data.TFRecordDataset([self.e2e_dataset])
-            # Parse the TFRecord
             dataset = dataset.map(lambda x: parse_function(x, self.canvas_size), num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            # Shuffle, repeat, and batch the examples
             dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size).repeat()
-            # Create an iterator
-            iterator = iter(dataset)
+            iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
             self.get_wav, self.get_noisy = iterator.get_next()
 
         if gpu_idx == 0:
@@ -603,7 +584,6 @@ class SEAE(Model):
         self.gtruth_wavs.append(self.get_wav)
         self.gtruth_noisy.append(self.get_noisy)
 
-        # add channels dimension to manipulate in D and G
         wavbatch = tf.expand_dims(self.get_wav, -1)
         noisybatch = tf.expand_dims(self.get_noisy, -1)
         if gpu_idx == 0:
@@ -624,7 +604,6 @@ class SEAE(Model):
         if gpu_idx == 0:
             self.g_losses = []
 
-        # Add the L1 loss to G
         g_loss = tf.reduce_mean(tf.abs(G - wavbatch))
 
         self.g_losses.append(g_loss)
@@ -642,7 +621,6 @@ class SEAE(Model):
         self.all_vars = t_vars
 
     def train(self, config, devices):
-        """ Train the SEAE """
         print('Initializing optimizer...')
         g_opt = self.g_opt
         num_devices = len(devices)
